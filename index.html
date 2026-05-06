@@ -811,28 +811,45 @@ Evalúa del 0 al 100 cada criterio y responde SOLO con este JSON:
   "resumen_supervisor": "<2-3 oraciones para el supervisor>"
 }`;
 
-    const evalResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + orKey,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': window.location.href,
-        'X-Title': 'QA Callcenter'
-      },
-      body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 1024
-      })
-    });
+    // Intentar múltiples modelos gratuitos en orden hasta que uno funcione
+    const MODELOS_GRATIS = [
+      'mistralai/mistral-7b-instruct:free',
+      'meta-llama/llama-3.2-3b-instruct:free',
+      'google/gemma-3-4b-it:free',
+      'qwen/qwen-2.5-7b-instruct:free',
+      'meta-llama/llama-3.1-8b-instruct:free',
+    ];
 
-    if (!evalResp.ok) {
-      const err = await evalResp.text();
-      throw new Error('OpenRouter evaluación: ' + err);
+    let evalData = null;
+    let ultimoError = '';
+    for (const modelo of MODELOS_GRATIS) {
+      log('Probando modelo: ' + modelo.split('/')[1], 'spin');
+      const evalResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + orKey,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': window.location.href,
+          'X-Title': 'QA Callcenter'
+        },
+        body: JSON.stringify({
+          model: modelo,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.2,
+          max_tokens: 1024
+        })
+      });
+      if (evalResp.ok) {
+        evalData = await evalResp.json();
+        log('Modelo activo: ' + modelo.split('/')[1], 'ok');
+        break;
+      } else {
+        ultimoError = await evalResp.text();
+        log('Modelo ocupado, probando siguiente...', 'info');
+      }
     }
+    if (!evalData) throw new Error('Todos los modelos están saturados. Intenta en unos minutos. ' + ultimoError);
 
-    const evalData = await evalResp.json();
     let rawText = evalData.choices[0].message.content.trim();
     rawText = rawText.replace(/```json/g,'').replace(/```/g,'').trim();
 

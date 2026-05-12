@@ -2031,67 +2031,103 @@ function exportarRankingCSV() {
 
 function renderPuntoDeQuiebre(data) {
   const el = document.getElementById('rep-quiebre');
-  if (!el || !data.length) {
-    if(el) el.innerHTML='<div class="empty-state" style="padding:20px"><p>Sin datos</p></div>';
+  if (!el) return;
+  if (!data.length) {
+    el.innerHTML='<div class="empty-state" style="padding:20px"><div class="empty-icon" style="font-size:28px">📊</div><p>Sin datos en el período</p></div>';
     return;
   }
-  // Definición de etapas con sus criterios
+
+  // Todas las claves posibles de criterios por etapa
   const etapas = [
-    {key:'apertura',     emoji:'👋', label:'Apertura',           keys:['ap_presentacion','ap_datos','ap_parentesco','ap_nombre'],           maxPts:11},
-    {key:'investigacion',emoji:'🔍', label:'Investigación',      keys:['inv_estudios','inv_sondeo','inv_edad'],                              maxPts:23},
-    {key:'demostracion', emoji:'🎯', label:'Demostración',       keys:['demo_beneficios','demo_economico','demo_ventaja','demo_precio','demo_empleabilidad'], maxPts:22},
-    {key:'objeciones',   emoji:'🛡',  label:'Manejo Objeciones', keys:['obj_objeciones','obj_referidos'],                                   maxPts:12},
-    {key:'cierre',       emoji:'🏁', label:'Cierre',             keys:['cre_cita','cre_seguimiento','cre_matricula'],                       maxPts:17},
-    {key:'etiqueta',     emoji:'💬', label:'Etiqueta / Trato',   keys:['etq_personalizacion','etq_plantillas','etq_respuesta','etq_conflicto','etq_control'], maxPts:15},
+    {emoji:'👋', label:'Apertura',           keys:['ap_presentacion','ap_datos','ap_parentesco','ap_nombre']},
+    {emoji:'🔍', label:'Investigación',      keys:['inv_estudios','inv_sondeo','inv_edad']},
+    {emoji:'🎯', label:'Demostración',       keys:['demo_beneficios','demo_economico','demo_ventaja','demo_precio','demo_empleabilidad']},
+    {emoji:'🛡',  label:'Manejo Objeciones', keys:['obj_objeciones','obj_referidos']},
+    {emoji:'🏁', label:'Cierre',             keys:['cre_cita','cre_seguimiento','cre_matricula']},
+    {emoji:'💬', label:'Etiqueta / Trato',   keys:['etq_personalizacion','etq_plantillas','etq_respuesta','etq_conflicto','etq_control']},
   ];
-  // Para cada etapa: calcular score promedio ponderado (0-100 por criterio)
-  // y la "pérdida" = 100 - avg → cuánto se está dejando de ganar
+
+  // Contar cuántas evaluaciones tienen scores detallados
+  const conScores = data.filter(h => h.scores && Object.keys(h.scores).length > 0).length;
+
+  if (conScores === 0) {
+    // Fallback: usar los scores legacy (saludo, empatia, objeciones, etc.) si existen
+    const etapasLegacy = [
+      {emoji:'👋', label:'Saludo e Identificación', keys:['saludo']},
+      {emoji:'❤️', label:'Tono y Empatía',           keys:['empatia']},
+      {emoji:'🛡',  label:'Manejo de Objeciones',    keys:['objeciones']},
+      {emoji:'🎯', label:'Propuesta Clara',           keys:['propuesta']},
+      {emoji:'⚖️', label:'Cumplimiento Regulatorio', keys:['regulatorio']},
+      {emoji:'👂', label:'Escucha Activa',            keys:['escucha']},
+      {emoji:'🏁', label:'Cierre Efectivo',           keys:['cierre']},
+    ];
+    // Intentar con campos legacy directos en la entrada
+    const resultadosLegacy = etapasLegacy.map(etapa => {
+      const vals = data.flatMap(h => {
+        return etapa.keys.map(k => {
+          // Buscar en scores o directamente en la entrada
+          const v = h.scores?.[k] ?? h[k];
+          return (v != null && !isNaN(Number(v))) ? Number(v) : null;
+        }).filter(v => v !== null);
+      });
+      const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+      return avg !== null ? { ...etapa, avg: Math.round(avg), perdida: Math.round(100-avg) } : null;
+    }).filter(Boolean);
+
+    if (!resultadosLegacy.length) {
+      el.innerHTML=`<div style="padding:16px;text-align:center">
+        <div style="font-size:28px;margin-bottom:8px">⚠️</div>
+        <div style="font-size:13px;font-weight:600;color:var(--yellow);margin-bottom:6px">Evaluaciones antiguas detectadas</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6">El punto de quiebre requiere evaluaciones<br>realizadas con la versión actual del sistema.<br><strong style="color:var(--text)">Evalúa una llamada nueva</strong> para activarlo.</div>
+      </div>`;
+      return;
+    }
+    // Mostrar con datos legacy
+    _renderQuiebreRows(el, resultadosLegacy, data.length);
+    return;
+  }
+
+  // Calcular con scores detallados por etapa
   const resultados = etapas.map(etapa => {
-    const vals = data.flatMap(h => etapa.keys.map(k => h.scores?.[k]).filter(v => v != null && v !== undefined));
-    const avg  = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-    const perdida = avg !== null ? Math.round(100 - avg) : null;
-    const conteo = vals.length;
-    return { ...etapa, avg: avg !== null ? Math.round(avg) : null, perdida, conteo };
-  }).filter(e => e.avg !== null);
+    const vals = data.flatMap(h => {
+      if (!h.scores) return [];
+      return etapa.keys.map(k => h.scores[k]).filter(v => v != null && !isNaN(Number(v))).map(Number);
+    });
+    const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    return avg !== null ? { ...etapa, avg: Math.round(avg), perdida: Math.round(100-avg) } : null;
+  }).filter(Boolean);
 
   if (!resultados.length) {
-    el.innerHTML='<div class="empty-state" style="padding:20px"><p>Sin datos de etapas evaluadas</p></div>';
+    el.innerHTML='<div class="empty-state" style="padding:20px"><p>Sin datos de etapas</p></div>';
     return;
   }
+  _renderQuiebreRows(el, resultados, data.length);
+}
 
-  // Ordenar por pérdida descendente (mayor pérdida = mayor quiebre)
+function _renderQuiebreRows(el, resultados, totalLlamadas) {
   resultados.sort((a,b) => b.perdida - a.perdida);
-  const maxPerdida = resultados[0]?.perdida || 1;
-
-  const totalLlamadas = data.length;
-
+  const maxPerdida = Math.max(...resultados.map(r=>r.perdida), 1);
   el.innerHTML = resultados.map((e, i) => {
-    const perdida = e.perdida;
-    const avg = e.avg;
-    // Color según gravedad de pérdida
-    const col   = perdida>=50?'var(--red)':perdida>=30?'var(--yellow)':'var(--green)';
-    const border= perdida>=50?'var(--red)':perdida>=30?'var(--yellow)':'var(--green)';
-    const bgDelta = perdida>=50?'rgba(248,113,113,.12)':perdida>=30?'rgba(251,191,36,.12)':'rgba(52,211,153,.12)';
-    const barW  = Math.round(perdida/maxPerdida*100);
-    const rank  = i+1;
-    // Nivel de quiebre en texto
-    const quiebreTxt = perdida>=50?'🔴 Quiebre crítico':perdida>=30?'🟡 Área de mejora':'🟢 Estable';
-    return `<div class="quiebre-row" style="border-left-color:${border}">
-      <div class="quiebre-rank" style="color:${rank<=2?col:'var(--muted)'}">${rank}</div>
+    const col      = e.perdida>=50?'var(--red)':e.perdida>=30?'var(--yellow)':'var(--green)';
+    const bgDelta  = e.perdida>=50?'rgba(248,113,113,.12)':e.perdida>=30?'rgba(251,191,36,.12)':'rgba(52,211,153,.12)';
+    const barW     = Math.round(e.perdida/maxPerdida*100);
+    const quiebreTxt = e.perdida>=50?'🔴 Quiebre crítico':e.perdida>=30?'🟡 Área de mejora':'🟢 Estable';
+    return `<div class="quiebre-row" style="border-left-color:${col}">
+      <div class="quiebre-rank" style="color:${i<2?col:'var(--muted)'}">${i+1}</div>
       <div class="quiebre-info">
         <div class="quiebre-label">${e.emoji} ${e.label}</div>
-        <div class="quiebre-sub">${quiebreTxt} · Promedio: ${avg}/100</div>
+        <div class="quiebre-sub">${quiebreTxt}</div>
       </div>
       <div class="quiebre-bar-wrap">
         <div class="quiebre-bar-track">
           <div class="quiebre-bar-fill" style="width:${barW}%;background:${col}"></div>
         </div>
       </div>
-      <div class="quiebre-score" style="color:${col}">${avg}</div>
-      <div class="quiebre-delta" style="background:${bgDelta};color:${col}">-${perdida}</div>
+      <div class="quiebre-score" style="color:${col}">${e.avg}<span style="font-size:10px;color:var(--muted)">/100</span></div>
+      <div class="quiebre-delta" style="background:${bgDelta};color:${col}">-${e.perdida}</div>
     </div>`;
-  }).join('') + `<div style="margin-top:12px;padding:10px 12px;background:var(--surface3);border-radius:8px;font-size:11px;color:var(--muted)">
-    📊 Análisis basado en <strong style="color:var(--text)">${totalLlamadas} llamada${totalLlamadas!==1?'s':''}</strong> del período · Score mostrado = promedio de criterios de la etapa · Pérdida (-) = puntos no obtenidos sobre 100
+  }).join('') + `<div style="margin-top:10px;padding:8px 10px;background:var(--surface3);border-radius:8px;font-size:11px;color:var(--muted)">
+    📊 <strong style="color:var(--text)">${totalLlamadas} llamada${totalLlamadas!==1?'s':''}</strong> analizadas · Score = promedio criterios de la etapa · <strong>-N</strong> = puntos perdidos sobre 100
   </div>`;
 }
 
